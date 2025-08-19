@@ -38,7 +38,6 @@ from tqdm import tqdm
 # NeMo and evaluation imports
 try:
     from nemo.collections.asr.models import EncDecMultiTaskModel
-    from nemo.collections.asr.metrics.wer import WER
     import jiwer
 except ImportError as e:
     print(f"Error importing required dependencies: {e}")

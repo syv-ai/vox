@@ -38,11 +38,8 @@ try:
     from nemo.core.config import hydra_runner
     from nemo.utils import logging as nemo_logging
     from nemo.utils.exp_manager import exp_manager
-    from nemo.utils.lightning_logger_utils import WandbLogger
-    from nemo.collections.asr.metrics.wer import WER
+    from nemo.collections.asr.metrics.wer import word_error_rate
     import pytorch_lightning as pl
-    from pytorch_lightning import Trainer
-    from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 except ImportError as e:
     print(f"Error importing NeMo dependencies: {e}")
     print("Please install NeMo with: pip install nemo-toolkit[asr]")
@@ -126,8 +123,7 @@ def evaluate_wer(model: EncDecMultiTaskModel, manifest_path: str, batch_size: in
         ground_truths.append(ground_truth.lower().strip())
     
     # Calculate WER
-    wer_metric = WER(vocabularies=None)
-    wer_value = wer_metric(hypotheses=hypotheses, references=ground_truths)
+    wer_value = word_error_rate(hypotheses=hypotheses, references=ground_truths)
     
     logging.info(f"WER: {wer_value:.2%}")
     logging.info(f"Sample predictions:")
@@ -293,7 +289,7 @@ def main():
     parser.add_argument(
         "--dataset", 
         type=str, 
-        default="alexandrainst/nota",
+        default="CoRal-project/coral-tts",
         help="HuggingFace dataset name"
     )
     parser.add_argument(
