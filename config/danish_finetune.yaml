@@ -1,0 +1,180 @@
+# Canary-1b-v2 Danish Finetuning Configuration
+# Based on the original Canary architecture with Danish language setup
+
+name: canary-1b-v2-danish-finetune
+
+# Model configuration
+model:
+  # Initialize from pretrained Canary-1b-v2
+  # This will be set programmatically in the training script
+  
+  # Core model settings
+  sample_rate: 16000
+  repeat_dataset_times: 1
+  compute_eval_loss: true
+  use_loss_mask_for_prompt: true
+  
+  # Prompt format for Canary-1b-v2
+  prompt_format: "canary2"
+  
+  # Default prompt settings for Danish
+  prompt_defaults:
+    source_lang: "da"
+    target_lang: "da" 
+    pnc: "True"
+    emotion: "<|emo:undefined|>"
+    itn: "False"
+    timestamp: "False"
+    diarize: "False"
+
+  # Training dataset configuration
+  train_ds:
+    manifest_filepath: null  # Will be set by training script
+    sample_rate: ${model.sample_rate}
+    batch_size: 8  # Adjust based on GPU memory
+    shuffle: true
+    num_workers: 4
+    pin_memory: true
+    max_duration: 30.0
+    min_duration: 0.5
+    
+    # Use 2D bucketing for efficient training
+    use_bucketing: true
+    # These will be computed automatically or set to reasonable defaults
+    bucket_duration_bins: null
+    bucket_batch_size: null
+    
+    # Data augmentation (optional - can improve robustness)
+    speed_perturb: false
+    noise_perturb: false
+    
+    # Text processing
+    normalize_text: true
+    trim_silence: true
+    
+    # For Danish language
+    text_field: "text"
+    lang_field: "target_lang"
+
+  # Validation dataset configuration  
+  validation_ds:
+    manifest_filepath: null  # Will be set by training script
+    sample_rate: ${model.sample_rate}
+    batch_size: 16  # Can be larger for validation
+    shuffle: false
+    num_workers: 2
+    pin_memory: true
+    max_duration: 30.0
+    min_duration: 0.5
+    
+    # No bucketing for validation
+    use_bucketing: false
+    
+    # Text processing
+    normalize_text: true
+    trim_silence: true
+    text_field: "text"
+    lang_field: "target_lang"
+
+  # Test dataset configuration
+  test_ds:
+    manifest_filepath: null  # Will be set by training script
+    sample_rate: ${model.sample_rate}
+    batch_size: 16
+    shuffle: false
+    num_workers: 2
+    pin_memory: true
+    max_duration: 30.0
+    min_duration: 0.5
+    
+    use_bucketing: false
+    normalize_text: true
+    trim_silence: true
+    text_field: "text"
+    lang_field: "target_lang"
+
+  # Optimizer configuration
+  optim:
+    name: adamw
+    lr: 5e-5  # Conservative learning rate for finetuning
+    betas: [0.9, 0.98]
+    weight_decay: 1e-3
+    
+    # Learning rate scheduler
+    sched:
+      name: WarmupAnnealing
+      warmup_steps: 500
+      warmup_ratio: null
+      min_lr: 1e-6
+      last_epoch: -1
+
+# Training configuration
+trainer:
+  devices: 1  # Number of GPUs
+  accelerator: gpu
+  num_nodes: 1
+  max_epochs: 10
+  max_steps: null  # Will train for specified epochs
+  
+  # Logging and checkpointing
+  log_every_n_steps: 50
+  check_val_every_n_epoch: 1
+  val_check_interval: 0.25  # Validate 4 times per epoch
+  
+  # Gradient settings
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  
+  # Mixed precision training
+  precision: 16
+  
+  # Strategy for multi-GPU (if available)
+  strategy: ddp_find_unused_parameters_true
+  
+  # Deterministic training
+  deterministic: false
+  enable_progress_bar: true
+  replace_sampler_ddp: false
+
+# Experiment manager configuration
+exp_manager:
+  exp_dir: ./results
+  name: ${name}
+  create_tensorboard_logger: true
+  create_checkpoint_callback: true
+  create_wandb_logger: false  # Set to true if using Weights & Biases
+  
+  checkpoint_callback_params:
+    monitor: val_wer
+    mode: min
+    save_top_k: 3
+    save_last: true
+    filename: '{epoch}-{step}-{val_wer:.4f}'
+    auto_insert_metric_name: false
+    
+  # Resume from checkpoint if available
+  resume_if_exists: true
+  resume_ignore_no_checkpoint: true
+  
+  # Exponential moving average (can help with stability)
+  ema:
+    enable: false
+    decay: 0.999
+    
+# Hydra configuration
+hydra:
+  run:
+    dir: .
+  job_chdir: false
+
+# Special tokens configuration (for Canary-1b-v2)
+spl_tokens:
+  # This will be set programmatically based on the pretrained model
+  model_dir: null
+
+# Language-specific settings
+languages:
+  danish:
+    code: "da"
+    name: "Danish"
+    # Canary-1b-v2 supports Danish, so we don't need custom tokenizers
