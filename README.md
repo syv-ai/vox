@@ -33,6 +33,20 @@ python scripts/speech_to_text_aed.py \
     trainer.log_every_n_steps=10
 ```
 
+If GPU memory is limited we can freeze the first parts of the model and only train the params near the output:
+
+```bash
+python scripts/low_mem_speech_to_text_aed.py \
+    model.train_ds.manifest_filepath=datasets/LibriLight/train_manifest.json \
+    model.validation_ds.manifest_filepath=datasets/LibriLight/train_manifest.json \
+    model.test_ds.manifest_filepath=datasets/LibriLight/train_manifest.json \
+    exp_manager.resume_ignore_no_checkpoint=true \
+    exp_manager.create_tensorboard_logger=false \
+    trainer.max_steps=100 \
+    trainer.log_every_n_steps=10
+```
+
+
 ## What's Fixed
 
 ### Original Issues
