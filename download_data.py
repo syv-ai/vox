@@ -1,15 +1,16 @@
 import os
 import tarfile
-
-# Install dependencies
-#!pip install wget
-#!apt-get update && apt-get install -y sox libsndfile1 ffmpeg
-#!pip install text-unidecode
-#!pip install omegaconf
-
-#BRANCH='main'
-
-#!python -m pip install git+https://github.com/NVIDIA/NeMo.git@{BRANCH}#egg=nemo_toolkit[asr]
+import wget
+import glob
+import tqdm
+import librosa
+import json
+import numpy as np
+import torch
+import subprocess
+import sys
+import shutil
+from omegaconf import OmegaConf
 
 
 # DOWNLOAD DATA 
@@ -34,21 +35,7 @@ def download_and_prepare_librilight_data(data_dir="datasets"):
 download_and_prepare_librilight_data()
 
 
-# INFERENCE
-from pydub import AudioSegment
-from IPython.display import Audio, display
-
-def listen_to_audio(audio_path, offset=0.0, duration=-1):
-    audio = AudioSegment.from_file(audio_path)
-    start_ms = int(offset * 1000)
-    if duration == -1:
-        end_ms = -1
-    else:
-        end_ms = int((offset+duration) * 1000)
-
-    segment = audio[start_ms:end_ms]
-    audio = Audio(segment.export(format='wav').read())
-    display(audio)
+# INFERENCE - Removed IPython specific code
 
 
 # BUILDING THE DATASET
@@ -97,47 +84,66 @@ map_location = 'cuda' if torch.cuda.is_available() else 'cpu'
 canary_model = EncDecMultiTaskModel.from_pretrained('nvidia/canary-1b-v2', map_location=map_location)
 canary_model.prompt_format = "canary2"
 
-# TRAINING FROM A CHECKPOINT
-# Load canary model if not previously loaded in this notebook instance
-if 'canary_model' not in locals():
-    canary_model = EncDecMultiTaskModel.from_pretrained('nvidia/canary-1b-v2')
+# Use a simple configuration that relies on init_from_pretrained_model
+# This avoids tokenizer conflicts by letting NeMo handle the initialization properly
 
 base_model_cfg = OmegaConf.load("config/fast-conformer_aed.yaml")
+base_model_cfg['name'] = None  # Set to None to avoid logger conflicts
+base_model_cfg.pop("spl_tokens", None)  # Remove spl_tokens to use unified tokenizer
+base_model_cfg.pop("init_from_nemo_model", None)  # Remove to avoid conflict with init_from_pretrained_model
 
-base_model_cfg['name'] = 'canary-1b-v2-finetune'
-base_model_cfg.pop("init_from_nemo_model", None)
+# Set mandatory values that were ??? in the config
+base_model_cfg['model']['prompt_format'] = "canary2"
+base_model_cfg['model']['tokenizer']['langs']['en']['dir'] = "./tokenizers"
+base_model_cfg['model']['tokenizer']['langs']['spl_tokens']['dir'] = "./tokenizers/spl_tokens"
+base_model_cfg['model']['prompt_defaults'] = [
+    {
+        "role": "user",
+        "slots": {
+            "decodercontext": "",
+            "source_lang": "<|en|>",
+            "target_lang": "<|en|>",
+            "emotion": "<|emo:undefined|>",
+            "pnc": "<|pnc|>",
+            "itn": "<|noitn|>",
+            "diarize": "<|nodiarize|>",
+            "timestamp": "<|notimestamp|>"
+        }
+    }
+]
+
 base_model_cfg['init_from_pretrained_model'] = "nvidia/canary-1b-v2"
-
-canary_model.save_tokenizers("./tokenizers")
-
-for lang in os.listdir('tokenizers'):
-    base_model_cfg['model']['tokenizer']['langs'][lang] = {}
-    base_model_cfg['model']['tokenizer']['langs'][lang]['dir'] = os.path.join('tokenizers', lang)
-    base_model_cfg['model']['tokenizer']['langs'][lang]['type'] = 'bpe'
-base_model_cfg['spl_tokens']['model_dir'] = os.path.join('tokenizers', "spl_tokens")
-
-base_model_cfg['model']['prompt_format'] = canary_model._cfg['prompt_format']
-base_model_cfg['model']['prompt_defaults'] = canary_model._cfg['prompt_defaults']
-
-base_model_cfg['model']['model_defaults'] = canary_model._cfg['model_defaults']
-base_model_cfg['model']['preprocessor'] = canary_model._cfg['preprocessor']
-base_model_cfg['model']['encoder'] = canary_model._cfg['encoder']
-base_model_cfg['model']['transf_decoder'] = canary_model._cfg['transf_decoder']
-base_model_cfg['model']['transf_encoder'] = canary_model._cfg['transf_encoder']
 
 cfg = OmegaConf.create(base_model_cfg)
 with open("config/canary-1b-v2-finetune.yaml", "w") as f:
     OmegaConf.save(cfg, f)
 
 MANIFEST = os.path.join("datasets", "LibriLight", 'train_manifest.json')
-!HYDRA_FULL_ERROR=1 python scripts/speech_to_text_aed.py \
-  --config-path="../config" \
-  --config-name="canary-180m-flash-finetune.yaml" \
-  name="canary-180m-flash-finetune" \
-  model.train_ds.manifest_filepath={MANIFEST} \
-  model.validation_ds.manifest_filepath={MANIFEST} \
-  model.test_ds.manifest_filepath={MANIFEST} \
-  exp_manager.exp_dir="canary_results" \
-  exp_manager.resume_ignore_no_checkpoint=true \
-  trainer.max_steps=10 \
-  trainer.log_every_n_steps=1
+
+# Create the conf directory structure that the training script expects
+conf_dir = "conf/speech_multitask"
+os.makedirs(conf_dir, exist_ok=True)
+
+# Move our config to the expected location
+shutil.copy("config/canary-1b-v2-finetune.yaml", f"{conf_dir}/fast-conformer_aed.yaml")
+
+# Run the training script (note: no config path/name args since they're hardcoded in the decorator)
+cmd = [
+    sys.executable, "scripts/speech_to_text_aed.py",
+    f"model.train_ds.manifest_filepath={MANIFEST}",
+    f"model.validation_ds.manifest_filepath={MANIFEST}",
+    f"model.test_ds.manifest_filepath={MANIFEST}",
+    "exp_manager.resume_ignore_no_checkpoint=true",
+    "exp_manager.create_tensorboard_logger=false",  # Disable to avoid logger conflict
+    "trainer.max_steps=10",
+    "trainer.log_every_n_steps=1"
+]
+
+env = os.environ.copy()
+env['HYDRA_FULL_ERROR'] = '1'
+
+result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+print("STDOUT:", result.stdout)
+if result.stderr:
+    print("STDERR:", result.stderr)
+print("Return code:", result.returncode)
